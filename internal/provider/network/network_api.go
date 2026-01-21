@@ -81,8 +81,8 @@ type VNetAction struct {
 	Params json.RawMessage `json:"params"`
 }
 
-// createNetwork creates a new network.
-func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceModel) error {
+// CreateNetwork creates a new network.
+func (nc *NetworkApi) CreateNetwork(ctx context.Context, data *NetworkResourceModel) error {
 
 	apiData := NetworkAPIResourceModel{
 		Name:            data.Name.ValueString(),
@@ -300,6 +300,39 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 	}
 	if req.StatusCode != 201 {
 		return fmt.Errorf("failed to kill Network: status code %v", req.StatusCode)
+	}
+
+	return nil
+}
+
+// PowerOnNetwork powers on a network by ID.
+func (nc *NetworkApi) PowerOnNetwork(ctx context.Context, networkID string) error {
+
+	tflog.Debug(ctx, fmt.Sprintf("Calling the PowerOn Network API for Network %v", networkID))
+
+	// Convert networkID string to int
+	networkIDInt, err := strconv.Atoi(networkID)
+	if err != nil {
+		return fmt.Errorf("invalid Network ID format: %v", err)
+	}
+
+	// Create the action payload according to vnet_actions schema
+	actionPayload := VNetAction{
+		VNet:   networkIDInt,
+		Action: "poweron",
+		Params: json.RawMessage("{}"), // Empty params for poweron action
+	}
+	bytedata, err := json.Marshal(actionPayload)
+	if err != nil {
+		return err
+	}
+	// Send the poweron action request to the vnet_actions endpoint
+	req, err := nc.client.Post(NetworkActionEndpoint, bytes.NewBuffer(bytedata))
+	if err != nil {
+		return err
+	}
+	if req.StatusCode != 201 {
+		return fmt.Errorf("failed to power on Network: status code %v", req.StatusCode)
 	}
 
 	return nil

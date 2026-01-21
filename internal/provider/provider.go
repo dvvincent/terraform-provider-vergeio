@@ -7,15 +7,17 @@ import (
 	"context"
 
 	cloudinitFile "terraform-provider-vergeio/internal/provider/cloudinit_files"
+	"terraform-provider-vergeio/internal/provider/file"
 	"terraform-provider-vergeio/internal/provider/cluster"
 	"terraform-provider-vergeio/internal/provider/groups"
 	"terraform-provider-vergeio/internal/provider/mediasource"
 	"terraform-provider-vergeio/internal/provider/member"
 	"terraform-provider-vergeio/internal/provider/network"
 	"terraform-provider-vergeio/internal/provider/node"
-	"terraform-provider-vergeio/internal/provider/recipe"
+
 	resourseGroups "terraform-provider-vergeio/internal/provider/resource_groups"
 	"terraform-provider-vergeio/internal/provider/tags"
+	"terraform-provider-vergeio/internal/provider/tenant"
 	"terraform-provider-vergeio/internal/provider/user"
 	"terraform-provider-vergeio/internal/provider/vergeio"
 	"terraform-provider-vergeio/internal/provider/version"
@@ -46,6 +48,7 @@ type vergeioProviderModel struct {
 	Host     types.String `tfsdk:"host"`
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
+	Token    types.String `tfsdk:"token"`
 	Insecure types.Bool   `tfsdk:"insecure"`
 }
 
@@ -62,15 +65,21 @@ func (p *vergeioProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				Required:            true,
 			},
 			"username": schema.StringAttribute{
-				MarkdownDescription: "Username",
-				Required:            true,
+				MarkdownDescription: "Username (not required if using token)",
+				Optional:            true,
 			},
 			"password": schema.StringAttribute{
-				MarkdownDescription: "Password",
-				Required:            true,
+				MarkdownDescription: "Password (not required if using token)",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"token": schema.StringAttribute{
+				MarkdownDescription: "API Token for authentication (alternative to username/password)",
+				Optional:            true,
+				Sensitive:           true,
 			},
 			"insecure": schema.BoolAttribute{
-				MarkdownDescription: "Allow insecure connections",
+				MarkdownDescription: "Allow insecure connections (skip TLS verification)",
 				Optional:            true,
 			},
 		},
@@ -87,12 +96,20 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 	}
 
 	// Configuration values are now available.
-	// if data.Endpoint.IsNull() { /* ... */ }
+	// Validate that either token or username/password is provided
+	if data.Token.IsNull() && (data.Username.IsNull() || data.Password.IsNull()) {
+		resp.Diagnostics.AddError(
+			"Missing Authentication",
+			"Either 'token' or both 'username' and 'password' must be provided.",
+		)
+		return
+	}
 
 	// Example client configuration for data sources and resources
 	client := &vergeio.Client{
 		Username: data.Username.ValueString(),
 		Password: data.Password.ValueString(),
+		Token:    data.Token.ValueString(),
 		Host:     data.Host.ValueString(),
 		Insecure: data.Insecure.ValueBool(),
 	}
@@ -111,7 +128,18 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		user.NewUserResource,
 		member.NewMemberResource,
 		tags.NewTagMemberResource,
-		recipe.NewRecipeResource,
+
+		vm.NewDriveResource,
+		vm.NewNICResource,
+		tenant.NewTenantResource,
+		tenant.NewTenantNodeResource,
+		tenant.NewTenantStorageResource,
+		network.NewVNetRuleResource,
+		network.NewVNetAddressResource,
+		file.NewFileResource,
+		vm.NewVMSnapshotResource,
+		tags.NewTagResource,
+		tags.NewTagCategoryResource,
 	}
 }
 

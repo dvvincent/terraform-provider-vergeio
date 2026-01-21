@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
+	"terraform-provider-vergeio/internal/provider/network"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -37,6 +38,8 @@ type nicResourceModel struct {
 	IPAddress       types.String `tfsdk:"ipaddress"`
 	AssignIPAddress types.Bool   `tfsdk:"assign_ipaddress"`
 	Asset           types.String `tfsdk:"asset"`
+	AutoCreateVNet  types.Bool   `tfsdk:"auto_create_vnet"`
+	VNetUplink      types.Int32  `tfsdk:"vnet_uplink"`
 }
 
 type nicAPIResourceModel struct {
@@ -94,7 +97,44 @@ func (nc *NICApi) Name() string {
 }
 
 // Create the NIC in the API.
-func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
+func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel, vmName string) error {
+	// If auto_create_vnet is true, create a new network first
+	if !data.AutoCreateVNet.IsNull() && !data.AutoCreateVNet.IsUnknown() && data.AutoCreateVNet.ValueBool() {
+		netApi := network.NewNetworkApi(nc.client)
+		
+		// For internal networks:
+		// - interface_vnet should be null/unset (uses default Physical layer for VXLAN)
+		// - vnet_default_gateway should be set to the uplink network for routing
+		// - DHCP and gateway should be configured
+		netData := &network.NetworkResourceModel{
+			Name:            types.StringValue(vmName),
+			Enabled:         types.BoolValue(true),
+			Type:            types.StringValue("internal"),
+			DHCP:            types.BoolValue(true),
+			Dynamic_DHCP:    types.BoolValue(true),
+			Default_Gateway: data.VNetUplink, // Use uplink as the default gateway for routing
+			// interface_vnet is intentionally NOT set - internal networks use Physical layer by default
+		}
+
+		tflog.Debug(ctx, fmt.Sprintf("Auto-creating network '%s' for NIC with uplink gateway %d", vmName, data.VNetUplink.ValueInt32()))
+		if err := netApi.CreateNetwork(ctx, netData); err != nil {
+			return fmt.Errorf("error auto-creating network '%s': %w", vmName, err)
+		}
+
+		// Convert IDs
+		vnetIdInt, err := strconv.Atoi(netData.Id.ValueString())
+		if err != nil {
+			return fmt.Errorf("error parsing newly created network ID: %w", err)
+		}
+		data.VNET = types.Int32Value(int32(vnetIdInt))
+
+		// Power on the newly created network
+		tflog.Debug(ctx, fmt.Sprintf("Powering on auto-created network '%s' (ID: %d)", vmName, vnetIdInt))
+		if err := netApi.PowerOnNetwork(ctx, netData.Id.ValueString()); err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Warning: failed to power on network '%s': %v", vmName, err))
+			// Don't fail - the network might power on later
+		}
+	}
 
 	// Default enabled to true if not explicitly set
 	enabled := true
@@ -197,7 +237,11 @@ func (nc *NICApi) assignIP(data *nicResourceModel) error {
 	if err := json.NewDecoder(apiResp.Body).Decode(&nicAPIResp); err != nil {
 		return errors.New("invalid format received for creating the NIC")
 	} else {
-		data.IPAddress = types.StringValue(nicAPIResp.Response)
+		if respStr, ok := nicAPIResp.Response.(string); ok {
+			data.IPAddress = types.StringValue(respStr)
+		} else {
+			data.IPAddress = types.StringValue(fmt.Sprintf("%v", nicAPIResp.Response))
+		}
 	}
 
 	return nil
@@ -365,7 +409,7 @@ func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId ty
 
 // Update, Create, Delete the NIC in the API.
 // This method is called from VM update method.
-func (na *NICApi) syncNICs(ctx context.Context, planData *[]*nicResourceModel, stateData *[]*nicResourceModel, machine types.Int32, vmId types.String) error {
+func (na *NICApi) syncNICs(ctx context.Context, planData *[]*nicResourceModel, stateData *[]*nicResourceModel, machine types.Int32, vmId types.String, vmName string) error {
 
 	tflog.Debug(ctx, "Syncing NICs: Starting deletion")
 
@@ -422,7 +466,7 @@ func (na *NICApi) syncNICs(ctx context.Context, planData *[]*nicResourceModel, s
 		}
 	}
 
-	tflog.Debug(ctx, "Syncing NICs: Starting insertion")
+	tflog.Debug(ctx, "Syncing NICs")
 
 	// Create the nics that are not in the state
 	for i, plan := range *planData {
@@ -435,7 +479,7 @@ func (na *NICApi) syncNICs(ctx context.Context, planData *[]*nicResourceModel, s
 		}
 		if !found {
 			plan.Machine = machine
-			if err := na.createNIC(ctx, plan); err != nil {
+			if err := na.createNIC(ctx, plan, vmName); err != nil {
 				return fmt.Errorf("failed to create nic: %v", err)
 			}
 			if err := na.readNIC(ctx, plan); err != nil {

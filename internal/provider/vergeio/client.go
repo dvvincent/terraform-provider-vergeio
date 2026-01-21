@@ -29,6 +29,7 @@ type Client struct {
 	name       string
 	Username   string
 	Password   string
+	Token      string  // API token (alternative to username/password)
 	Host       string
 	Insecure   bool
 	httpClient *http.Client
@@ -64,7 +65,7 @@ func NewClient(host string,
 				IdleConnTimeout:     90 * time.Second,
 				TLSClientConfig:     &tls.Config{InsecureSkipVerify: insecure},
 			},
-			Timeout: time.Duration(5) * time.Second,
+			Timeout: time.Duration(30) * time.Minute,
 		},
 	}
 }
@@ -80,9 +81,9 @@ type Options struct {
 
 // VergeResponse structure.
 type VergeResponse struct {
-	Key      string `json:"$key,omitempty"`
-	Response string `json:"response,omitempty"`
-	Error    string `json:"err,omitempty"`
+	Key      string      `json:"$key,omitempty"`
+	Response interface{} `json:"response,omitempty"`
+	Error    string      `json:"err,omitempty"`
 }
 
 // Error represents a error from the Verge.IO api.
@@ -114,7 +115,7 @@ func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, param
 		return nil, err
 	}
 
-	req.SetBasicAuth(c.Username, c.Password)
+	c.setAuth(req)
 	qs := req.URL.Query()
 	if method == "GET" {
 		log.Printf("[DEBUG] params %#v", params)
@@ -201,7 +202,51 @@ func (c *Client) Put(endpoint string, jsonpayload *bytes.Buffer) (*http.Response
 	return c.Do("PUT", endpoint, jsonpayload, nil)
 }
 
+// PutReader allows sending a generic io.Reader (like a file or http response body) via PUT.
+func (c *Client) PutReader(endpoint string, reader io.Reader, contentType string, contentLength int64) (*http.Response, error) {
+	absoluteendpoint := c.serverURL(endpoint)
+	log.Printf("[DEBUG] Sending PUT binary request to %s (Length: %d)", absoluteendpoint, contentLength)
+
+	req, err := http.NewRequest("PUT", absoluteendpoint, reader)
+	if err != nil {
+		return nil, err
+	}
+
+	c.setAuth(req)
+	if contentType != "" {
+		req.Header.Add("Content-Type", contentType)
+	} else {
+		req.Header.Add("Content-Type", "application/octet-stream")
+	}
+
+	if contentLength > 0 {
+		req.ContentLength = contentLength
+	}
+
+	req.Close = true
+
+	if c.httpClient == nil {
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: c.Insecure},
+		}
+		c.httpClient = &http.Client{Transport: tr}
+	}
+
+	return c.httpClient.Do(req)
+}
+
 // Delete is just a helper to Do but with a DELETE verb.
 func (c *Client) Delete(endpoint string) (*http.Response, error) {
 	return c.Do("DELETE", endpoint, nil, nil)
+}
+
+// setAuth sets the appropriate authentication on the request.
+// Uses token-based auth (x-yottabyte-token header) if Token is set,
+// otherwise falls back to basic auth with Username/Password.
+func (c *Client) setAuth(req *http.Request) {
+	if c.Token != "" {
+		req.Header.Set("x-yottabyte-token", c.Token)
+	} else {
+		req.SetBasicAuth(c.Username, c.Password)
+	}
 }

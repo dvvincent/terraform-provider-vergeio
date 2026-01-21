@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	TagsEndpoint       = "api/v4/tags"
-	TagMembersEndpoint = "api/v4/tag_members"
+	TagsEndpoint           = "api/v4/tags"
+	TagMembersEndpoint     = "api/v4/tag_members"
+	TagCategoriesEndpoint  = "api/v4/tag_categories"
 )
 
 var _ vergeio.IClient = &TagsApi{}
@@ -389,6 +390,469 @@ func (ta *TagsApi) deleteTagMember(ctx context.Context, data *TagMemberResourceM
 	}
 
 	tflog.Debug(ctx, "Successfully deleted tag member")
+
+	return nil
+}
+
+// TagAPIResourceModel represents the API model for tags
+type TagAPIResourceModel struct {
+	Key         interface{} `json:"$key,omitempty"`
+	Name        string      `json:"name,omitempty"`
+	Description string      `json:"description,omitempty"`
+	Category    int         `json:"category,omitempty"`
+}
+
+// Create a tag.
+func (ta *TagsApi) createTag(ctx context.Context, data *TagResourceModel) error {
+	tflog.Debug(ctx, "Creating tag")
+
+	// First check if the tags endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagsEndpoint); err != nil {
+		return err
+	}
+
+	// Prepare payload
+	payload := TagAPIResourceModel{
+		Name:        data.Name.ValueString(),
+		Description: data.Description.ValueString(),
+	}
+	if !data.Category.IsNull() && !data.Category.IsUnknown() {
+		payload.Category = int(data.Category.ValueInt32())
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tag payload: %w", err)
+	}
+
+	apiResp, err := ta.client.Post(TagsEndpoint, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode != 200 && apiResp.StatusCode != 201 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	// Read response body to get the created resource
+	body, err := io.ReadAll(apiResp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Create response body: %s", string(body)))
+
+	// Parse response to get the key
+	var createdTag TagAPIResourceModel
+	if err := json.Unmarshal(body, &createdTag); err != nil {
+		return fmt.Errorf("invalid format received for created tag: %w", err)
+	}
+
+	// Set the ID from the response
+	keyStr := fmt.Sprintf("%v", createdTag.Key)
+	data.Id = types.StringValue(keyStr)
+
+	tflog.Debug(ctx, fmt.Sprintf("Successfully created tag with key %s", keyStr))
+
+	// Read back to get full data
+	return ta.readTag(ctx, data)
+}
+
+// Read tag from the API.
+func (ta *TagsApi) readTag(ctx context.Context, data *TagResourceModel) error {
+	tflog.Debug(ctx, fmt.Sprintf("Reading tag with ID %s", data.Id.ValueString()))
+
+	// First check if the tags endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagsEndpoint); err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/%s", TagsEndpoint, data.Id.ValueString())
+	apiResp, err := ta.client.Get(endpoint, &vergeio.Options{Fields: "most"})
+
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			data.Id = types.StringNull()
+			return nil
+		}
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == 404 {
+		data.Id = types.StringNull()
+		return nil
+	}
+
+	if apiResp.StatusCode != 200 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	// Read response body
+	body, err := io.ReadAll(apiResp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Response body: %s", string(body)))
+
+	// Decode the API response
+	var tagAPIResp TagAPIResourceModel
+	if err := json.Unmarshal(body, &tagAPIResp); err != nil {
+		return fmt.Errorf("invalid format received for tag: %w", err)
+	}
+
+	// Update the model with API data
+	keyStr := fmt.Sprintf("%v", tagAPIResp.Key)
+	data.Id = types.StringValue(keyStr)
+	data.Name = types.StringValue(tagAPIResp.Name)
+	data.Description = types.StringValue(tagAPIResp.Description)
+	if tagAPIResp.Category > 0 {
+		data.Category = types.Int32Value(int32(tagAPIResp.Category))
+	}
+
+	tflog.Debug(ctx, "Successfully read tag from API")
+
+	return nil
+}
+
+// Update tag.
+func (ta *TagsApi) updateTag(ctx context.Context, data *TagResourceModel) error {
+	tflog.Debug(ctx, fmt.Sprintf("Updating tag with ID %s", data.Id.ValueString()))
+
+	// First check if the tags endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagsEndpoint); err != nil {
+		return err
+	}
+
+	// Prepare payload
+	payload := TagAPIResourceModel{
+		Name:        data.Name.ValueString(),
+		Description: data.Description.ValueString(),
+	}
+	if !data.Category.IsNull() && !data.Category.IsUnknown() {
+		payload.Category = int(data.Category.ValueInt32())
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tag payload: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/%s", TagsEndpoint, data.Id.ValueString())
+	apiResp, err := ta.client.Put(endpoint, bytes.NewBuffer(payloadBytes))
+
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			return fmt.Errorf("tag not found")
+		}
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == 404 {
+		return fmt.Errorf("tag not found")
+	}
+
+	if apiResp.StatusCode != 200 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	tflog.Debug(ctx, "Successfully updated tag")
+
+	return ta.readTag(ctx, data)
+}
+
+// Delete tag.
+func (ta *TagsApi) deleteTag(ctx context.Context, data *TagResourceModel) error {
+	tflog.Debug(ctx, fmt.Sprintf("Deleting tag with ID %s", data.Id.ValueString()))
+
+	// First check if the tags endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagsEndpoint); err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/%s", TagsEndpoint, data.Id.ValueString())
+	apiResp, err := ta.client.Delete(endpoint)
+
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			tflog.Debug(ctx, "Tag not found during deletion (may already be deleted)")
+			return nil
+		}
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == 404 {
+		tflog.Debug(ctx, "Tag not found during deletion (may already be deleted)")
+		return nil
+	}
+
+	if apiResp.StatusCode != 200 && apiResp.StatusCode != 204 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	tflog.Debug(ctx, "Successfully deleted tag")
+
+	return nil
+}
+
+// TagCategoryAPIResourceModel represents the API model for tag categories
+type TagCategoryAPIResourceModel struct {
+	Key                     interface{} `json:"$key,omitempty"`
+	Name                    string      `json:"name,omitempty"`
+	Description             string      `json:"description,omitempty"`
+	SingleTagSelection      bool        `json:"single_tag_selection,omitempty"`
+	TaggableVMs             bool        `json:"taggable_vms,omitempty"`
+	TaggableVolumes         bool        `json:"taggable_volumes,omitempty"`
+	TaggableVnets           bool        `json:"taggable_vnets,omitempty"`
+	TaggableVnetRules       bool        `json:"taggable_vnet_rules,omitempty"`
+	TaggableTenants         bool        `json:"taggable_tenants,omitempty"`
+	TaggableTenantNodes     bool        `json:"taggable_tenant_nodes,omitempty"`
+	TaggableUsers           bool        `json:"taggable_users,omitempty"`
+	TaggableNodes           bool        `json:"taggable_nodes,omitempty"`
+	TaggableClusters        bool        `json:"taggable_clusters,omitempty"`
+	TaggableGroups          bool        `json:"taggable_groups,omitempty"`
+	TaggableSites           bool        `json:"taggable_sites,omitempty"`
+	TaggableVmwareContainers bool       `json:"taggable_vmware_containers,omitempty"`
+}
+
+// Create a tag category.
+func (ta *TagsApi) createTagCategory(ctx context.Context, data *TagCategoryResourceModel) error {
+	tflog.Debug(ctx, "Creating tag category")
+
+	if err := ta.checkEndpointAvailability(ctx, TagCategoriesEndpoint); err != nil {
+		return err
+	}
+
+	payload := TagCategoryAPIResourceModel{
+		Name:                    data.Name.ValueString(),
+		Description:             data.Description.ValueString(),
+		SingleTagSelection:      data.SingleTagSelection.ValueBool(),
+		TaggableVMs:             data.TaggableVMs.ValueBool(),
+		TaggableVolumes:         data.TaggableVolumes.ValueBool(),
+		TaggableVnets:           data.TaggableVnets.ValueBool(),
+		TaggableVnetRules:       data.TaggableVnetRules.ValueBool(),
+		TaggableTenants:         data.TaggableTenants.ValueBool(),
+		TaggableTenantNodes:     data.TaggableTenantNodes.ValueBool(),
+		TaggableUsers:           data.TaggableUsers.ValueBool(),
+		TaggableNodes:           data.TaggableNodes.ValueBool(),
+		TaggableClusters:        data.TaggableClusters.ValueBool(),
+		TaggableGroups:          data.TaggableGroups.ValueBool(),
+		TaggableSites:           data.TaggableSites.ValueBool(),
+		TaggableVmwareContainers: data.TaggableVmwareContainers.ValueBool(),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tag category payload: %w", err)
+	}
+
+	apiResp, err := ta.client.Post(TagCategoriesEndpoint, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode != 200 && apiResp.StatusCode != 201 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	body, err := io.ReadAll(apiResp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Create response body: %s", string(body)))
+
+	var createdCategory TagCategoryAPIResourceModel
+	if err := json.Unmarshal(body, &createdCategory); err != nil {
+		return fmt.Errorf("invalid format received for created tag category: %w", err)
+	}
+
+	keyStr := fmt.Sprintf("%v", createdCategory.Key)
+	data.Id = types.StringValue(keyStr)
+
+	tflog.Debug(ctx, fmt.Sprintf("Successfully created tag category with key %s", keyStr))
+
+	return ta.readTagCategory(ctx, data)
+}
+
+// Read tag category from the API.
+func (ta *TagsApi) readTagCategory(ctx context.Context, data *TagCategoryResourceModel) error {
+	tflog.Debug(ctx, fmt.Sprintf("Reading tag category with ID %s", data.Id.ValueString()))
+
+	if err := ta.checkEndpointAvailability(ctx, TagCategoriesEndpoint); err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/%s", TagCategoriesEndpoint, data.Id.ValueString())
+	apiResp, err := ta.client.Get(endpoint, &vergeio.Options{Fields: "most"})
+
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			data.Id = types.StringNull()
+			return nil
+		}
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == 404 {
+		data.Id = types.StringNull()
+		return nil
+	}
+
+	if apiResp.StatusCode != 200 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	body, err := io.ReadAll(apiResp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Response body: %s", string(body)))
+
+	var categoryAPIResp TagCategoryAPIResourceModel
+	if err := json.Unmarshal(body, &categoryAPIResp); err != nil {
+		return fmt.Errorf("invalid format received for tag category: %w", err)
+	}
+
+	keyStr := fmt.Sprintf("%v", categoryAPIResp.Key)
+	data.Id = types.StringValue(keyStr)
+	data.Name = types.StringValue(categoryAPIResp.Name)
+	data.Description = types.StringValue(categoryAPIResp.Description)
+	data.SingleTagSelection = types.BoolValue(categoryAPIResp.SingleTagSelection)
+	data.TaggableVMs = types.BoolValue(categoryAPIResp.TaggableVMs)
+	data.TaggableVolumes = types.BoolValue(categoryAPIResp.TaggableVolumes)
+	data.TaggableVnets = types.BoolValue(categoryAPIResp.TaggableVnets)
+	data.TaggableVnetRules = types.BoolValue(categoryAPIResp.TaggableVnetRules)
+	data.TaggableTenants = types.BoolValue(categoryAPIResp.TaggableTenants)
+	data.TaggableTenantNodes = types.BoolValue(categoryAPIResp.TaggableTenantNodes)
+	data.TaggableUsers = types.BoolValue(categoryAPIResp.TaggableUsers)
+	data.TaggableNodes = types.BoolValue(categoryAPIResp.TaggableNodes)
+	data.TaggableClusters = types.BoolValue(categoryAPIResp.TaggableClusters)
+	data.TaggableGroups = types.BoolValue(categoryAPIResp.TaggableGroups)
+	data.TaggableSites = types.BoolValue(categoryAPIResp.TaggableSites)
+	data.TaggableVmwareContainers = types.BoolValue(categoryAPIResp.TaggableVmwareContainers)
+
+	tflog.Debug(ctx, "Successfully read tag category from API")
+
+	return nil
+}
+
+// Update tag category.
+func (ta *TagsApi) updateTagCategory(ctx context.Context, data *TagCategoryResourceModel) error {
+	tflog.Debug(ctx, fmt.Sprintf("Updating tag category with ID %s", data.Id.ValueString()))
+
+	if err := ta.checkEndpointAvailability(ctx, TagCategoriesEndpoint); err != nil {
+		return err
+	}
+
+	payload := TagCategoryAPIResourceModel{
+		Name:                    data.Name.ValueString(),
+		Description:             data.Description.ValueString(),
+		SingleTagSelection:      data.SingleTagSelection.ValueBool(),
+		TaggableVMs:             data.TaggableVMs.ValueBool(),
+		TaggableVolumes:         data.TaggableVolumes.ValueBool(),
+		TaggableVnets:           data.TaggableVnets.ValueBool(),
+		TaggableVnetRules:       data.TaggableVnetRules.ValueBool(),
+		TaggableTenants:         data.TaggableTenants.ValueBool(),
+		TaggableTenantNodes:     data.TaggableTenantNodes.ValueBool(),
+		TaggableUsers:           data.TaggableUsers.ValueBool(),
+		TaggableNodes:           data.TaggableNodes.ValueBool(),
+		TaggableClusters:        data.TaggableClusters.ValueBool(),
+		TaggableGroups:          data.TaggableGroups.ValueBool(),
+		TaggableSites:           data.TaggableSites.ValueBool(),
+		TaggableVmwareContainers: data.TaggableVmwareContainers.ValueBool(),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tag category payload: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/%s", TagCategoriesEndpoint, data.Id.ValueString())
+	apiResp, err := ta.client.Put(endpoint, bytes.NewBuffer(payloadBytes))
+
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			return fmt.Errorf("tag category not found")
+		}
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == 404 {
+		return fmt.Errorf("tag category not found")
+	}
+
+	if apiResp.StatusCode != 200 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	tflog.Debug(ctx, "Successfully updated tag category")
+
+	return ta.readTagCategory(ctx, data)
+}
+
+// Delete tag category.
+func (ta *TagsApi) deleteTagCategory(ctx context.Context, data *TagCategoryResourceModel) error {
+	tflog.Debug(ctx, fmt.Sprintf("Deleting tag category with ID %s", data.Id.ValueString()))
+
+	if err := ta.checkEndpointAvailability(ctx, TagCategoriesEndpoint); err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/%s", TagCategoriesEndpoint, data.Id.ValueString())
+	apiResp, err := ta.client.Delete(endpoint)
+
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			tflog.Debug(ctx, "Tag category not found during deletion (may already be deleted)")
+			return nil
+		}
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == 404 {
+		tflog.Debug(ctx, "Tag category not found during deletion (may already be deleted)")
+		return nil
+	}
+
+	if apiResp.StatusCode != 200 && apiResp.StatusCode != 204 {
+		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	tflog.Debug(ctx, "Successfully deleted tag category")
 
 	return nil
 }

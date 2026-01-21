@@ -9,6 +9,8 @@ This document describes three fixes and one enhancement made to the VergeOS Terr
 | `internal/provider/vm/nic_api.go` | +8 lines |
 | `internal/provider/vm/vm_api.go` | +13 lines |
 | `internal/provider/vm/vm_resource.go` | +74 lines |
+| `internal/provider/network/vnet_rule_api.go` | New File |
+| `internal/provider/network/vnet_rule_resource.go` | New File |
 
 ---
 
@@ -221,3 +223,28 @@ These changes are backwards compatible:
 | NICs disabled by default | `ValueBool()` returns `false` for null | Default to `true` when not set |
 | Cloud-init files lost | `cloudinit_files` not in API request | Add field to API request |
 | Password auth fails | Using `passwd` instead of `plain_text_passwd` | Use correct cloud-init field |
+
+---
+
+## Enhancement: VNet Rule Management (Firewall/NAT)
+
+### Description
+Implemented the `vergeioxp_vnet_rule` resource to manage firewall rules and NAT translations.
+
+### Key Fixes
+1. **Read-only Fields**: Resolved 422 errors during updates by making the `vnet` ID field optional (`omitempty`) in API requests, as VergeOS rejects the field if it hasn't changed.
+2. **Automated Application**: Implemented a post-action `refresh` on the parent vNET. Without this, rules are saved to the database but not injected into the active firewall configuration.
+3. **Smart Filter Support**: Added `OrderID` and verified support for smart identifiers like `router` or `vmnic:ID.NIC`.
+
+### Example
+```hcl
+resource "vergeioxp_vnet_rule" "nat" {
+  vnet              = 6
+  name              = "Web Forward"
+  action            = "translate"
+  destination_ip    = "router"
+  destination_ports = "8080"
+  target_ip         = "192.168.0.241"
+  target_ports      = "80"
+}
+```

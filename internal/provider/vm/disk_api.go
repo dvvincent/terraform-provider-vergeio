@@ -218,6 +218,13 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 		}
 	}
 
+	// If we were importing, restore the original media and disksize for the initial state
+	// to avoid "inconsistent result" errors where Terraform expects what was in the plan.
+	if origData.Media.ValueString() == "import" {
+		data.Media = origData.Media
+		data.DiskSize = origData.DiskSize
+	}
+
 	return nil
 }
 
@@ -272,6 +279,13 @@ func (da *DiskApi) updateDisk(ctx context.Context, planData *diskResourceModel, 
 		return fmt.Errorf("error reading the disk %v", readDataError)
 	}
 
+	// If we were importing, restore the original media and disksize for the initial state
+	// to avoid "inconsistent result" errors where Terraform expects what was in the plan.
+	if planData.Media.ValueString() == "import" {
+		stateData.Media = planData.Media
+		stateData.DiskSize = planData.DiskSize
+	}
+
 	return nil
 }
 
@@ -311,6 +325,7 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 	data.Name = types.StringValue(diskAPIResp.Name)
 	data.Description = types.StringValue(diskAPIResp.Description)
 	data.Interface = types.StringValue(diskAPIResp.Interface)
+	data.Media = types.StringValue(diskAPIResp.Media)
 	data.DiskSize = types.Int64Value(diskAPIResp.DiskSize / (1024 * 1024 * 1024))
 	data.PreferredTier = types.StringValue(diskAPIResp.PreferredTier)
 	data.Enabled = types.BoolValue(diskAPIResp.Enabled)

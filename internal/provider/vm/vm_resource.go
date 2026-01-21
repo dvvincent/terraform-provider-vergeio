@@ -401,6 +401,14 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Optional: true,
 							Computed: true,
 						},
+						"auto_create_vnet": schema.BoolAttribute{
+							MarkdownDescription: "Automatically create a new internal network for this NIC, named after the VM.",
+							Optional:            true,
+						},
+						"vnet_uplink": schema.Int32Attribute{
+							MarkdownDescription: "The ID of the external/DMZ network to use as the default gateway for routing when auto_create_vnet is true. This configures outbound connectivity for the auto-created internal network.",
+							Optional:            true,
+						},
 						"macaddress": schema.StringAttribute{
 							Optional: true,
 							Computed: true,
@@ -842,7 +850,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		for _, nic := range data.NICs {
 			nic.Machine = data.Machine
 
-			createError := r.nicApi.createNIC(ctx, nic)
+			createError := r.nicApi.createNIC(ctx, nic, data.Name.ValueString())
 			if createError != nil {
 				tflog.Debug(ctx, fmt.Sprintf("Error creating nic %v", createError))
 				resp.Diagnostics.AddError(
@@ -1045,7 +1053,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 	// update NICs
 	if planData.NICs != nil && stateData.NICs != nil {
-		if err := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id); err != nil {
+		if err := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id, planData.Name.ValueString()); err != nil {
 			resp.Diagnostics.AddError(
 				"Error syncing NICs",
 				err.Error(),

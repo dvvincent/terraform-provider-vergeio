@@ -214,7 +214,7 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	// Call the API to create the network
-	if err := r.networkApi.createNetwork(ctx, &data); err != nil {
+	if err := r.networkApi.CreateNetwork(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Network",
 			err.Error(),
