@@ -513,7 +513,14 @@ func (ta *TagsApi) readTag(ctx context.Context, data *TagResourceModel) error {
 	keyStr := fmt.Sprintf("%v", tagAPIResp.Key)
 	data.Id = types.StringValue(keyStr)
 	data.Name = types.StringValue(tagAPIResp.Name)
-	data.Description = types.StringValue(tagAPIResp.Description)
+	
+	// Preserve null for description if API returns empty string and plan had null
+	if tagAPIResp.Description == "" && data.Description.IsNull() {
+		// Keep it null
+	} else {
+		data.Description = types.StringValue(tagAPIResp.Description)
+	}
+	
 	if tagAPIResp.Category > 0 {
 		data.Category = types.Int32Value(int32(tagAPIResp.Category))
 	}
@@ -742,7 +749,14 @@ func (ta *TagsApi) readTagCategory(ctx context.Context, data *TagCategoryResourc
 	keyStr := fmt.Sprintf("%v", categoryAPIResp.Key)
 	data.Id = types.StringValue(keyStr)
 	data.Name = types.StringValue(categoryAPIResp.Name)
-	data.Description = types.StringValue(categoryAPIResp.Description)
+	
+	// Preserve null for description if API returns empty string and plan had null
+	if categoryAPIResp.Description == "" && data.Description.IsNull() {
+		// Keep it null
+	} else {
+		data.Description = types.StringValue(categoryAPIResp.Description)
+	}
+	
 	data.SingleTagSelection = types.BoolValue(categoryAPIResp.SingleTagSelection)
 	data.TaggableVMs = types.BoolValue(categoryAPIResp.TaggableVMs)
 	data.TaggableVolumes = types.BoolValue(categoryAPIResp.TaggableVolumes)
