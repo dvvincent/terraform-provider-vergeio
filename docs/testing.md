@@ -90,6 +90,15 @@ Available tests:
 - `TestAccVNetRule_nat` - Create NAT/translate rule
 - `TestAccVNetRule_drop` - Create drop rule for ICMP
 
+### Network Tests (`internal/provider/network/network_test.go`)
+
+These tests don't require any special setup beyond credentials:
+
+- `TestAccNetwork_basic` - Create, update, import an internal network
+- `TestAccNetwork_withDHCP` - Create a network with DHCP enabled
+- `TestAccNetwork_internalType` - Create a network with explicit internal type
+- `TestAccNetwork_powerState` - Create a network with power state management
+
 ## Writing New Tests
 
 ### Test Structure
