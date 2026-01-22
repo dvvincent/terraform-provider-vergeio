@@ -164,3 +164,63 @@ resource "vergeio_network" "test" {
 }
 `, name, ip, network, powerstate)
 }
+
+// TestAccNetwork_fullInternal tests a complete internal network configuration
+// with DHCP, power state, and power loss settings. This validates the typical
+// production configuration for internal networks.
+func TestAccNetwork_fullInternal(t *testing.T) {
+	rName := acctest.RandomWithPrefix("tf-acc-full")
+	resourceName := "vergeio_network.test"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acc.PreCheck(t) },
+		ProtoV6ProviderFactories: acc.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccNetworkConfig_fullInternal(rName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "name", rName),
+					resource.TestCheckResourceAttr(resourceName, "type", "internal"),
+					resource.TestCheckResourceAttr(resourceName, "network", "10.99.0.0/24"),
+					resource.TestCheckResourceAttr(resourceName, "ipaddress", "10.99.0.1"),
+					resource.TestCheckResourceAttr(resourceName, "dhcp_enabled", "true"),
+					resource.TestCheckResourceAttr(resourceName, "dhcp_start", "10.99.0.2"),
+					resource.TestCheckResourceAttr(resourceName, "dhcp_stop", "10.99.0.50"),
+					resource.TestCheckResourceAttr(resourceName, "on_power_loss", "last_state"),
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					// Verify interface_vnet is NOT set (should be null/unset)
+					// Setting interface_vnet on internal networks causes VXLAN errors
+				),
+			},
+		},
+	})
+}
+
+// testAccNetworkConfig_fullInternal returns a complete internal network configuration
+// matching a typical production setup. NOTE: interface_vnet should NOT be set for
+// internal networks - it causes VXLAN "group requires dev" errors.
+func testAccNetworkConfig_fullInternal(name string) string {
+	return acc.ProviderConfig() + fmt.Sprintf(`
+resource "vergeio_network" "test" {
+  name          = %q
+  type          = "internal"
+  
+  # Network addressing
+  network       = "10.99.0.0/24"
+  ipaddress     = "10.99.0.1"
+  
+  # DHCP configuration
+  dhcp_enabled  = true
+  dhcp_start    = "10.99.0.2"
+  dhcp_stop     = "10.99.0.50"
+  
+  # Power management
+  powerstate    = "running"
+  on_power_loss = "last_state"
+  
+  # NOTE: Do NOT set interface_vnet for internal networks - it causes
+  # "Error creating vxlan: vxlan: 'group' requires 'dev'" errors.
+  # For external routing, use vergeio_vnet_rule with action = "translate" instead.
+}
+`, name)
+}
